@@ -1,0 +1,229 @@
+#!/bin/bash
+
+########
+#This is a bash script for candida albicans to run on the cluster
+#The genome is haploid, since we don't want multi-mapped reads for gene expression and pathway analysis
+last updated - 12-11-2025
+Suzette Palmer
+########
+
+set -euo pipefail
+
+#load in venv rnaseq
+module load miniforge3
+source /project/apps/apps_rhel9/spack/opt/spack/linux-rhel9-x86_64/gcc-14.2.0/miniforge3-24.3.0-0-tclqy4b76omr2ci7uskkk2xzeznj7ehw/etc/profile.d/conda.sh
+conda activate rnaseq
+
+#load in modules
+module load python
+module load fastqc
+module load multiqc
+module load star
+
+
+# open path to sequences 
+cd /project/pediatrics/Koh_lab/shared/Suzette_MCFA-CA-colonization_RNAseqAdmera_Dec2025
+
+#load in annotation and reference candida albicans SC5314 genome
+#UCSC Genome for Candida albicans SC5314
+# Download the genomic FASTA (.fna.gz)
+#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.fna.gz
+# Download the RefSeq GTF annotation
+#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.gtf.gz
+# (Optional) Download the assembly report (useful for names/metadata)
+#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_assembly_report.txt
+# Uncompress the files
+#gunzip GCF_000182965.3_ASM18296v3_genomic.gtf.gz
+#gunzip GCF_000182965.3_ASM18296v3_genomic.fna.gz
+
+# ----------------------------
+# STEP 1 - QUALITY ASSESSMENT USING FASTQC/MULTIQC
+# ----------------------------
+
+INPUT_DIR="sequences"
+QC_PRE_DIR="qc"            # FastQC on raw reads
+
+mkdir -p "$QC_PRE_DIR" 
+
+echo "Running sequentially on all *.fastq.gz files in: $INPUT_DIR"
+
+# ----------------------------
+# 1) FastQC on raw FASTQ files
+# ----------------------------
+
+echo "Starting FastQC on RAW FASTQ files..."
+
+for f in "$INPUT_DIR"/*.fastq.gz; do
+    base=$(basename "$f" .fastq.gz)
+
+    echo "Running FastQC (raw) on $base ..."
+
+    fastqc "$f" \
+        -o "$QC_PRE_DIR" \
+        1>"$QC_PRE_DIR/${base}.fastqc_raw.log" \
+        2>"$QC_PRE_DIR/${base}.fastqc_raw.err"
+
+    echo "Finished FastQC (raw) on $base"
+done
+
+echo "FastQC on RAW reads completed."
+
+echo "Running MultiQC on raw FastQC results..."
+multiqc "$QC_PRE_DIR" -o "$QC_PRE_DIR"
+
+echo "MultiQC report (trimmed reads) generated in: $QC_PRE_DIR"
+echo "Step 2 (fastp + FastQC + MultiQC on trimmed reads) complete."
+
+
+# --------- Paths ---------
+TRIM_DIR="trim"                        # trimmed reads
+QC_TRIM_DIR="qc_trim"                  # FastQC/MultiQC on trimmed reads
+
+mkdir -p "$TRIM_DIR" "$QC_TRIM_DIR"
+
+echo "=== Step 2: Paired-end fastp trimming + FastQC/MultiQC on trimmed reads ==="
+
+# ----------------------------
+# 2a) Paired-end fastp trimming
+# ----------------------------
+
+echo "Starting paired-end fastp trimming..."
+
+for r1 in "$INPUT_DIR"/*_R1_001.fastq.gz; do
+    r2="${r1/_R1_001/_R2_001}"   # infer mate
+
+    if [[ ! -f "$r2" ]]; then
+        echo "WARNING: Missing R2 for $r1 (expected $r2). Skipping."
+        continue
+    fi
+
+    base_r1=$(basename "$r1" .fastq.gz)  
+    base_r2=$(basename "$r2" .fastq.gz)  
+
+    out_r1="$TRIM_DIR/${base_r1}.trim.fastq.gz"
+    out_r2="$TRIM_DIR/${base_r2}.trim.fastq.gz"
+
+    echo "Running fastp on pair:"
+    echo "  R1: $r1"
+    echo "  R2: $r2"
+
+
+    fastp \
+    -i "$r1" \
+    -I "$r2" \
+    -o "$out_r1" \
+    -O "$out_r2" \
+    -j "$TRIM_DIR/${base_r1}.fastp.json" \
+    -h "$TRIM_DIR/${base_r1}.fastp.html" \
+    1>"$TRIM_DIR/${base_r1}.fastp.log" \
+    2>"$TRIM_DIR/${base_r1}.fastp.err"
+
+    echo "Finished fastp on $(basename "$r1" "_R1_001.fastq.gz")"
+done
+
+echo "Paired-end fastp trimming completed. Trimmed files are in: $TRIM_DIR"
+
+# ----------------------------
+# 2b) FastQC on trimmed reads
+# ----------------------------
+
+echo "Starting FastQC on trimmed reads in: $TRIM_DIR"
+
+for f in "$TRIM_DIR"/*.trim.fastq.gz; do
+    base=$(basename "$f" .trim.fastq.gz)
+
+    echo "Running FastQC (trimmed) on $base ..."
+
+    fastqc "$f" \
+        -o "$QC_TRIM_DIR" \
+        1>"$QC_TRIM_DIR/${base}.fastqc_trim.log" \
+        2>"$QC_TRIM_DIR/${base}.fastqc_trim.err"
+
+    echo "Finished FastQC (trimmed) on $base"
+done
+
+echo "FastQC on trimmed reads completed. Results in: $QC_TRIM_DIR"
+
+# ----------------------------
+# 2c) MultiQC on trimmed FastQC
+# ----------------------------
+
+echo "Running MultiQC on trimmed FastQC results..."
+multiqc "$QC_TRIM_DIR" -o "$QC_TRIM_DIR"
+
+echo "MultiQC report (trimmed reads) generated in: $QC_TRIM_DIR"
+echo "Step 2 (fastp + FastQC + MultiQC on trimmed reads) complete."
+
+
+##### CONFIGURATION #####
+
+# Input filenames (assume these exist already in current directory)
+GTF_FILE="GCF_000182965.3_ASM18296v3_genomic.gtf"
+FASTA_FILE="GCF_000182965.3_ASM18296v3_genomic.fna"
+
+# STAR index directory
+STAR_INDEX_DIR="candida_STAR_index"
+
+# Number of threads to use for STAR indexing
+THREADS=4
+
+# Read length (adjust if your reads change)
+#READ_LENGTH=151
+#SJDB_OVERHANG=$((READ_LENGTH - 1))
+
+# Determine maximum read length from the first R1 FASTQ in your trim directory
+FIRST_R1=$(find "$TRIM_DIR" -maxdepth 1 -name "*_R1_*.fastq.gz" | head -n1)
+
+if [ -z "$FIRST_R1" ]; then
+    echo "No FASTQ files found in $TRIM_DIR" >&2
+    exit 1
+fi
+
+# peek at the first 10000 reads to estimate max read length
+MAX_LENGTH=$(zcat "$FIRST_R1" \
+    | awk 'NR%4==2 { if (length($0) > max) max = length($0) } END { print max }')
+
+if [ -z "$MAX_LENGTH" ] || [ "$MAX_LENGTH" -lt 1 ]; then
+    echo "Unable to determine read length from $FIRST_R1" >&2
+    exit 1
+fi
+
+SJDB_OVERHANG=$((MAX_LENGTH - 1))
+echo "Detected max read length: $MAX_LENGTH (using sjdbOverhang=$SJDB_OVERHANG)"
+
+##### BUILD STAR INDEX #####
+
+echo "=== Building STAR index in directory '$STAR_INDEX_DIR' ==="
+mkdir -p "$STAR_INDEX_DIR"
+
+echo "Using sjdbOverhang = $SJDB_OVERHANG"  
+
+STAR --runThreadN $THREADS \
+     --runMode genomeGenerate \
+     --genomeDir "$STAR_INDEX_DIR" \
+     --genomeFastaFiles "$FASTA_FILE" \
+     --sjdbGTFfile "$GTF_FILE" \
+     --sjdbOverhang $SJDB_OVERHANG \
+     --genomeSAindexNbases 10
+
+
+echo "=== STAR index build complete ==="
+
+# Simple check for expected index files
+
+if [ -f "${STAR_INDEX_DIR}/Genome" ] && [ -f "${STAR_INDEX_DIR}/SA" ]; then
+  echo "STAR index created successfully in: $STAR_INDEX_DIR"
+else
+  echo "Warning: STAR index files not found — check for errors above." >&2
+  exit 1
+fi
+
+echo "Done. You can now run STAR alignment using --genomeDir $STAR_INDEX_DIR"
+
+
+
+
+
+
+
+
