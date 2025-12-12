@@ -27,14 +27,14 @@ cd /project/pediatrics/Koh_lab/shared/Suzette_MCFA-CA-colonization_RNAseqAdmera_
 #load in annotation and reference candida albicans SC5314 genome
 #UCSC Genome for Candida albicans SC5314
 # Download the genomic FASTA (.fna.gz)
-#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.fna.gz
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.fna.gz
 # Download the RefSeq GTF annotation
-#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.gtf.gz
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_genomic.gtf.gz
 # (Optional) Download the assembly report (useful for names/metadata)
-#wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_assembly_report.txt
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/182/965/GCF_000182965.3_ASM18296v3/GCF_000182965.3_ASM18296v3_assembly_report.txt
 # Uncompress the files
-#gunzip GCF_000182965.3_ASM18296v3_genomic.gtf.gz
-#gunzip GCF_000182965.3_ASM18296v3_genomic.fna.gz
+gunzip GCF_000182965.3_ASM18296v3_genomic.gtf.gz
+gunzip GCF_000182965.3_ASM18296v3_genomic.fna.gz
 
 # ----------------------------
 # STEP 1 - QUALITY ASSESSMENT USING FASTQC/MULTIQC
@@ -219,6 +219,43 @@ else
 fi
 
 echo "Done. You can now run STAR alignment using --genomeDir $STAR_INDEX_DIR"
+
+
+STAR_INDEX="candida_STAR_index"
+THREADS=8              # increase threads if available
+TRIM_DIR="./trim"
+OUTDIR="./STAR_alignment"
+LOGDIR="./STAR_logs"
+mkdir -p "$OUTDIR" "$LOGDIR"
+
+# Set high limit for BAM sorting (e.g. 200 GB)
+BAMSORT_MAX_RAM=200000000000
+
+for fq1 in "${TRIM_DIR}"/*_R1_*.fastq.gz; do
+  fq2="${fq1/_R1_/_R2_}"
+  [ ! -f "$fq2" ] && { echo "Mate missing for $fq1 — skipping"; continue; }
+  sample=$(basename "$fq1" _R1_001.trim.fastq.gz)
+  prefix="${OUTDIR}/${sample}_"
+  logfile="${LOGDIR}/${sample}.STAR.log"
+
+  echo "=== STAR alignment: $sample ===" | tee "$logfile"
+  STAR --runThreadN $THREADS \
+       --genomeDir "$STAR_INDEX" \
+       --readFilesIn "$fq1" "$fq2" \
+       --readFilesCommand zcat \
+       --outFileNamePrefix "$prefix" \
+       --outSAMtype BAM SortedByCoordinate \
+       --quantMode GeneCounts \
+       --outSAMunmapped Within \
+       --twopassMode Basic \
+       --limitBAMsortRAM $BAMSORT_MAX_RAM \
+       2>&1 | tee -a "$logfile"
+  echo "=== Finished $sample ===" | tee -a "$logfile"
+done
+
+cd STAR_alignment
+multiqc .
+
 
 
 
