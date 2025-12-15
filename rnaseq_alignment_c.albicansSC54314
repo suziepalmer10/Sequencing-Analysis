@@ -256,7 +256,21 @@ done
 cd STAR_alignment
 multiqc .
 
+#feature counts for paired end for 
+module load subread
+GTF="/project/pediatrics/Koh_lab/shared/Animesh_SCFA-CA-colonization_RNAseqAdemera_Nov2025/GCF_000182965.3_ASM18296v3_genomic.gtf"
 
+STAR_DIR="/project/pediatrics/Koh_lab/shared/Animesh_SCFA-CA-colonization_RNAseqAdemera_Nov2025/STAR_alignment"
+
+featureCounts \
+  -T 8 \
+  -p \
+  -s 0 \
+  -t gene \
+  -g gene_id \
+  -a "$GTF" \
+  -o "$STAR_DIR/candida_gene_counts.txt" \
+  "$STAR_DIR"/*_Aligned.sortedByCoord.out.bam
 
 
 
